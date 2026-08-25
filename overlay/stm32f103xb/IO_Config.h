@@ -6,10 +6,13 @@
  *
  *   1  3V3
  *   2  GND
- *   3  DIO     PB14   SWDIO (DAP)  /  IO0 (ESP)
- *   4  CLK/TX  PA2    SWCLK (DAP)  /  UART TX (ESP)
+ *   3  DIO     PB14   SWDIO (DAP)  /  UART RX soft (ESP)
+ *   4  CLK/TX  PA2    SWCLK (DAP)  /  UART TX soft (ESP)
  *   5  RST     PB0    nRESET (DAP) /  EN (ESP)
- *   6  RX      PA3    UART RX (both; DAP CDC RX-only because PA2 is SWCLK)
+ *   6  IO0/RX  PA3    UART RX CDC (DAP) /  IO0 GPIO (ESP)
+ *
+ * ESP32 mode does NOT use hardware USART: TX/RX are GPIO bit-bang.
+ * IO0 is a plain GPIO driven by USB-CDC DTR.
  */
 #ifndef __IO_CONFIG_H__
 #define __IO_CONFIG_H__
@@ -45,17 +48,15 @@ COMPILER_ASSERT(DAPLINK_HIC_ID == DAPLINK_HIC_ID_STM32F103XB);
 #define nRESET_PIN_Bit               0
 
 /*
- * Pin4: SWCLK (DAPLink) / UART TX (ESP32)
- * USART2_TX is PA2 — in DAP mode this pad is bit-banged as SWCLK;
- * in ESP32 mode it is USART2 TX.
+ * Pin4: SWCLK (DAPLink) / soft UART TX (ESP32)
  */
 #define SWCLK_TCK_PIN_PORT           GPIOA
 #define SWCLK_TCK_PIN                GPIO_PIN_2
 #define SWCLK_TCK_PIN_Bit            2
 
 /*
- * Pin3: SWDIO (DAPLink) / ESP32 IO0
- * Single bidirectional SWDIO pad (IN and OUT are the same pin).
+ * Pin3: SWDIO (DAPLink) / soft UART RX (ESP32)
+ * Single bidirectional SWDIO pad in DAP mode.
  */
 #define SWDIO_OUT_PIN_PORT           GPIOB
 #define SWDIO_OUT_PIN                GPIO_PIN_14
@@ -65,7 +66,9 @@ COMPILER_ASSERT(DAPLINK_HIC_ID == DAPLINK_HIC_ID_STM32F103XB);
 #define SWDIO_IN_PIN                 SWDIO_OUT_PIN
 #define SWDIO_IN_PIN_Bit             SWDIO_OUT_PIN_Bit
 
-/* Pin6: UART RX (USART2_RX PA3) — both modes */
+/*
+ * Pin6: DAP CDC RX (USART2_RX) / ESP32 IO0 (GPIO via DTR)
+ */
 #define TARGET_UART_RX_PORT          GPIOA
 #define TARGET_UART_RX_PIN           GPIO_PIN_3
 
@@ -98,12 +101,13 @@ COMPILER_ASSERT(DAPLINK_HIC_ID == DAPLINK_HIC_ID_STM32F103XB);
 #define ESP32_EN_PORT                nRESET_PIN_PORT
 #define ESP32_EN_PIN                 nRESET_PIN
 
-#define ESP32_IO0_PORT               SWDIO_OUT_PIN_PORT
-#define ESP32_IO0_PIN                SWDIO_OUT_PIN
+/* Swapped vs earlier revision: IO0 on PA3, soft RX on PB14 */
+#define ESP32_IO0_PORT               TARGET_UART_RX_PORT
+#define ESP32_IO0_PIN                TARGET_UART_RX_PIN
 
 #define ESP32_UART_TX_PORT           SWCLK_TCK_PIN_PORT
 #define ESP32_UART_TX_PIN            SWCLK_TCK_PIN
-#define ESP32_UART_RX_PORT           TARGET_UART_RX_PORT
-#define ESP32_UART_RX_PIN            TARGET_UART_RX_PIN
+#define ESP32_UART_RX_PORT           SWDIO_OUT_PIN_PORT
+#define ESP32_UART_RX_PIN            SWDIO_OUT_PIN
 
 #endif

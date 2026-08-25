@@ -33,8 +33,10 @@ void esp32_autoload_init(void)
 
     /*
      * ESP32 mode on the same 6-pin header:
-     *   PB14 IO0, PB0 EN, PA2 TX, PA3 RX  (+ 3V3 / GND)
-     * Emulate classic auto-download: idle EN/IO0 high.
+     *   PA3  IO0 (GPIO / DTR)
+     *   PB0  EN  (GPIO / RTS)
+     *   PA2  TX  (soft UART)
+     *   PB14 RX  (soft UART)
      */
     HAL_GPIO_WritePin(ESP32_EN_PORT, ESP32_EN_PIN, GPIO_PIN_SET);
     HAL_GPIO_WritePin(ESP32_IO0_PORT, ESP32_IO0_PIN, GPIO_PIN_SET);

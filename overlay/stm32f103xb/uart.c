@@ -1,24 +1,7 @@
 /**
  * @file    uart.c
- * @brief
- *
- * DAPLink Interface Firmware
- * Copyright (c) 2009-2016, ARM Limited, All Rights Reserved
- * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * @brief   Target UART — HW USART2 in DAP mode, soft UART in ESP32 mode
  */
-
 #include "string.h"
 
 #include "stm32f1xx.h"
@@ -28,8 +11,8 @@
 #include "circ_buf.h"
 #include "IO_Config.h"
 #include "esp32_autoload.h"
+#include "esp32_soft_uart.h"
 
-// For usart
 #define CDC_UART                     USART2
 #define CDC_UART_ENABLE()            __HAL_RCC_USART2_CLK_ENABLE()
 #define CDC_UART_DISABLE()           __HAL_RCC_USART2_CLK_DISABLE()
@@ -37,7 +20,6 @@
 #define CDC_UART_IRQn_Handler        USART2_IRQHandler
 
 #define UART_PINS_PORT_ENABLE()      __HAL_RCC_GPIOA_CLK_ENABLE()
-#define UART_PINS_PORT_DISABLE()     __HAL_RCC_GPIOA_CLK_DISABLE()
 
 #define UART_TX_PORT                 GPIOA
 #define UART_TX_PIN                  GPIO_PIN_2
@@ -50,7 +32,6 @@
 
 #define UART_RTS_PORT                GPIOA
 #define UART_RTS_PIN                 GPIO_PIN_1
-
 
 #define RX_OVRF_MSG         "<DAPLink:Overflow>\n"
 #define RX_OVRF_MSG_SIZE    (sizeof(RX_OVRF_MSG) - 1)
@@ -71,8 +52,6 @@ static UART_Configuration configuration = {
 
 extern uint32_t SystemCoreClock;
 
-
-
 static void clear_buffers(void)
 {
     circ_buf_init(&write_buffer, write_buffer_data, sizeof(write_buffer_data));
@@ -83,32 +62,25 @@ int32_t uart_initialize(void)
 {
     GPIO_InitTypeDef GPIO_InitStructure;
 
-    CDC_UART->CR1 &= ~(USART_IT_TXE | USART_IT_RXNE);
     clear_buffers();
 
+    if (esp32_autoload_enabled()) {
+        /* ESP32 mode: GPIO soft UART on PA2/PB14; PA3 is IO0 (not USART). */
+        esp32_soft_uart_init();
+        return 1;
+    }
+
+    /* DAPLink mode: USART2 RX-only on PA3 (PA2 is SWCLK). */
+    CDC_UART->CR1 &= ~(USART_IT_TXE | USART_IT_RXNE);
     CDC_UART_ENABLE();
     UART_PINS_PORT_ENABLE();
 
-    /*
-     * Unified header pin4 = PA2:
-     *   ESP32 mode  -> USART2 TX
-     *   DAPLink mode -> SWCLK bit-bang (do not claim as UART TX)
-     */
-    if (esp32_autoload_enabled()) {
-        GPIO_InitStructure.Pin = UART_TX_PIN;
-        GPIO_InitStructure.Speed = GPIO_SPEED_FREQ_HIGH;
-        GPIO_InitStructure.Mode = GPIO_MODE_AF_PP;
-        HAL_GPIO_Init(UART_TX_PORT, &GPIO_InitStructure);
-    }
-
-    /* Pin6 PA3: UART RX in both modes */
     GPIO_InitStructure.Pin = UART_RX_PIN;
     GPIO_InitStructure.Speed = GPIO_SPEED_FREQ_HIGH;
     GPIO_InitStructure.Mode = GPIO_MODE_INPUT;
     GPIO_InitStructure.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(UART_RX_PORT, &GPIO_InitStructure);
 
-    /* Legacy CTS/RTS pads (not on the 6-pin target header) */
     GPIO_InitStructure.Pin = UART_CTS_PIN;
     GPIO_InitStructure.Speed = GPIO_SPEED_FREQ_HIGH;
     GPIO_InitStructure.Mode = GPIO_MODE_INPUT;
@@ -122,83 +94,58 @@ int32_t uart_initialize(void)
     HAL_GPIO_Init(UART_RTS_PORT, &GPIO_InitStructure);
 
     NVIC_EnableIRQ(CDC_UART_IRQn);
-
     return 1;
 }
 
 int32_t uart_uninitialize(void)
 {
-    CDC_UART->CR1 &= ~(USART_IT_TXE | USART_IT_RXNE);
+    if (!esp32_autoload_enabled()) {
+        CDC_UART->CR1 &= ~(USART_IT_TXE | USART_IT_RXNE);
+    }
     clear_buffers();
     return 1;
 }
 
 int32_t uart_reset(void)
 {
-    const uint32_t cr1 = CDC_UART->CR1;
-    CDC_UART->CR1 = cr1 & ~(USART_IT_TXE | USART_IT_RXNE);
-    clear_buffers();
-    CDC_UART->CR1 = cr1 & ~USART_IT_TXE;
+    if (!esp32_autoload_enabled()) {
+        const uint32_t cr1 = CDC_UART->CR1;
+        CDC_UART->CR1 = cr1 & ~(USART_IT_TXE | USART_IT_RXNE);
+        clear_buffers();
+        CDC_UART->CR1 = cr1 & ~USART_IT_TXE;
+    } else {
+        clear_buffers();
+    }
     return 1;
 }
 
 int32_t uart_set_configuration(UART_Configuration *config)
 {
+    configuration.Parity = UART_PARITY_NONE;
+    configuration.StopBits = UART_STOP_BITS_1;
+    configuration.DataBits = UART_DATA_BITS_8;
+    configuration.FlowControl = UART_FLOW_CONTROL_NONE;
+    configuration.Baudrate = config->Baudrate;
+
+    if (esp32_autoload_enabled()) {
+        esp32_soft_uart_set_baudrate(configuration.Baudrate);
+        clear_buffers();
+        return 1;
+    }
+
     UART_HandleTypeDef uart_handle;
     HAL_StatusTypeDef status;
 
     memset(&uart_handle, 0, sizeof(uart_handle));
     uart_handle.Instance = CDC_UART;
-
-    // parity
-    configuration.Parity = config->Parity;
-    if(config->Parity == UART_PARITY_ODD) {
-        uart_handle.Init.Parity = HAL_UART_PARITY_ODD;
-    } else if(config->Parity == UART_PARITY_EVEN) {
-        uart_handle.Init.Parity = HAL_UART_PARITY_EVEN;
-    } else if(config->Parity == UART_PARITY_NONE) {
-        uart_handle.Init.Parity = HAL_UART_PARITY_NONE;
-    } else {   //Other not support
-        uart_handle.Init.Parity = HAL_UART_PARITY_NONE;
-        configuration.Parity = UART_PARITY_NONE;
-    }
-
-    // stop bits
-    configuration.StopBits = config->StopBits;
-    if(config->StopBits == UART_STOP_BITS_2) {
-        uart_handle.Init.StopBits = UART_STOPBITS_2;
-    } else if(config->StopBits == UART_STOP_BITS_1_5) {
-        uart_handle.Init.StopBits = UART_STOPBITS_2;
-        configuration.StopBits = UART_STOP_BITS_2;
-    } else if(config->StopBits == UART_STOP_BITS_1) {
-        uart_handle.Init.StopBits = UART_STOPBITS_1;
-    } else {
-        uart_handle.Init.StopBits = UART_STOPBITS_1;
-        configuration.StopBits = UART_STOP_BITS_1;
-    }
-
-    //Only 8 bit support
-    configuration.DataBits = UART_DATA_BITS_8;
-    if (uart_handle.Init.Parity == HAL_UART_PARITY_ODD || uart_handle.Init.Parity == HAL_UART_PARITY_EVEN) {
-        uart_handle.Init.WordLength = UART_WORDLENGTH_9B;
-    } else {
-        uart_handle.Init.WordLength = UART_WORDLENGTH_8B;
-    }
-
-    // No flow control
-    configuration.FlowControl = UART_FLOW_CONTROL_NONE;
-    uart_handle.Init.HwFlowCtl  = UART_HWCONTROL_NONE;
-    
-    // Specified baudrate
-    configuration.Baudrate = config->Baudrate;
+    uart_handle.Init.Parity = HAL_UART_PARITY_NONE;
+    uart_handle.Init.StopBits = UART_STOPBITS_1;
+    uart_handle.Init.WordLength = UART_WORDLENGTH_8B;
+    uart_handle.Init.HwFlowCtl = UART_HWCONTROL_NONE;
     uart_handle.Init.BaudRate = config->Baudrate;
+    uart_handle.Init.Mode = UART_MODE_RX; /* PA2 is SWCLK — RX only */
 
-    // TX and RX
-    uart_handle.Init.Mode = UART_MODE_TX_RX;
-    
-    // Disable uart and tx/rx interrupt
     CDC_UART->CR1 &= ~(USART_IT_TXE | USART_IT_RXNE);
-
     clear_buffers();
 
     status = HAL_UART_DeInit(&uart_handle);
@@ -208,7 +155,6 @@ int32_t uart_set_configuration(UART_Configuration *config)
     (void)status;
 
     CDC_UART->CR1 |= USART_IT_RXNE;
-
     return 1;
 }
 
@@ -216,29 +162,33 @@ int32_t uart_get_configuration(UART_Configuration *config)
 {
     config->Baudrate = configuration.Baudrate;
     config->DataBits = configuration.DataBits;
-    config->Parity   = configuration.Parity;
+    config->Parity = configuration.Parity;
     config->StopBits = configuration.StopBits;
     config->FlowControl = UART_FLOW_CONTROL_NONE;
-
     return 1;
 }
 
 void uart_set_control_line_state(uint16_t ctrl_bmp)
 {
-    /* DAPLink mode: ignore. ESP32 mode: classic auto-download EN/IO0. */
     esp32_autoload_set_control_lines(ctrl_bmp);
 }
 
 int32_t uart_write_free(void)
 {
+    if (esp32_autoload_enabled()) {
+        return 64; /* soft TX is synchronous */
+    }
     return circ_buf_count_free(&write_buffer);
 }
 
 int32_t uart_write_data(uint8_t *data, uint16_t size)
 {
+    if (esp32_autoload_enabled()) {
+        return (int32_t)esp32_soft_uart_write(data, size);
+    }
+
     uint32_t cnt = circ_buf_write(&write_buffer, data, size);
     CDC_UART->CR1 |= USART_IT_TXE;
-
     return cnt;
 }
 
@@ -249,6 +199,10 @@ int32_t uart_read_data(uint8_t *data, uint16_t size)
 
 void CDC_UART_IRQn_Handler(void)
 {
+    if (esp32_autoload_enabled()) {
+        return;
+    }
+
     const uint32_t sr = CDC_UART->SR;
 
     if (sr & USART_SR_RXNE) {
@@ -257,9 +211,7 @@ void CDC_UART_IRQn_Handler(void)
         if (free > RX_OVRF_MSG_SIZE) {
             circ_buf_push(&read_buffer, dat);
         } else if (RX_OVRF_MSG_SIZE == free) {
-            circ_buf_write(&read_buffer, (uint8_t*)RX_OVRF_MSG, RX_OVRF_MSG_SIZE);
-        } else {
-            // Drop character
+            circ_buf_write(&read_buffer, (uint8_t *)RX_OVRF_MSG, RX_OVRF_MSG_SIZE);
         }
     }
 

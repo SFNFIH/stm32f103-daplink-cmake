@@ -20,23 +20,24 @@
 |------|------|-------|--------------|------------|
 | 1 | 3V3 | 3V3 | 电源 | 电源 |
 | 2 | GND | GND | 地 | 地 |
-| 3 | DIO | **PB14** | SWDIO | IO0 (BOOT) |
-| 4 | CLK/TX | **PA2** | SWCLK | UART TX → ESP RX0 |
-| 5 | RST | **PB0** | nRESET | EN |
-| 6 | RX | **PA3** | UART RX（CDC） | UART RX ← ESP TX0 |
+| 3 | DIO | **PB14** | SWDIO | **UART RX（软件串口）** |
+| 4 | CLK/TX | **PA2** | SWCLK | **UART TX（软件串口）** |
+| 5 | RST | **PB0** | nRESET | EN（GPIO / RTS） |
+| 6 | IO0 | **PA3** | UART RX（CDC，硬件 USART2） | **IO0（GPIO / DTR）** |
 
 说明：
 
-- **SWDIO / IO0**、**nRESET / EN** 为同一 GPIO，按模式改功能。  
-- **PA2** 在 DAP 模式作 SWCLK，在 ESP 模式作串口 TX（因此 DAP 模式下目标串口只保证 RX，TX 与 SWCLK 复用）。  
-- ESP32 模式：DTR→IO0、RTS→EN（经典自动下载时序），PB6 连接灯常亮。
+- ESP32 烧录串口为 **GPIO 位带软件 UART**（不是硬件 USART）；IO0/EN 为普通 GPIO。  
+- **IO0 与 RX 已对调**：IO0=PA3，RX=PB14。  
+- DAP 模式下 PA2 作 SWCLK，故目标串口仅 RX（PA3）可用。  
+- ESP32 模式：DTR→IO0、RTS→EN；PB6 连接灯常亮。
 
 ```
         6-Pin Header
    ┌─────────────────┐
    │ 1 3V3    2 GND  │
-   │ 3 DIO    4 CLK  │  CLK = SWCLK 或 TX
-   │ 5 RST    6 RX   │
+   │ 3 DIO    4 CLK  │  DIO=SWDIO/软RX  CLK=SWCLK/软TX
+   │ 5 RST    6 IO0  │  RST=nRESET/EN   IO0=CDC_RX/ESP_IO0
    └─────────────────┘
 ```
 
@@ -50,10 +51,10 @@
 |------|-------|
 | 3V3 | 3V3 |
 | GND | GND |
-| DIO | GPIO0 |
-| CLK/TX | RX0 |
-| RST | EN |
-| RX | TX0 |
+| DIO (PB14) | TX0（模组输出） |
+| CLK/TX (PA2) | RX0（模组输入） |
+| RST (PB0) | EN |
+| IO0 (PA3) | GPIO0 |
 
 ```bash
 esptool.py --port <串口> write_flash 0x1000 app.bin
@@ -68,7 +69,7 @@ esptool.py --port <串口> write_flash 0x1000 app.bin
 | DIO | SWDIO |
 | CLK/TX | SWCLK |
 | RST | nRESET |
-| RX | 目标 UART TX（可选，作日志） |
+| IO0 | 目标 UART TX（可选日志） |
 
 ---
 
