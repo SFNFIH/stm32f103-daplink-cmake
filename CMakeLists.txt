@@ -120,6 +120,10 @@ set(_WITH_ENV "${CMAKE_CURRENT_SOURCE_DIR}/scripts/with_daplink_env.sh")
 string(REPLACE ";" "," _daplink_projects_csv "${_daplink_projects}")
 
 add_custom_target(daplink-generate
+    COMMAND "${CMAKE_COMMAND}"
+            "-DDAPLINK_ROOT=${DAPLINK_ROOT}"
+            "-DOVERLAY_DIR=${CMAKE_CURRENT_SOURCE_DIR}/overlay/stm32f103xb"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyOverlay.cmake"
     COMMAND "${_WITH_ENV}"
             "${DAPLINK_VENV_PYTHON}" "${DAPLINK_PROGEN}"
             generate
@@ -127,11 +131,15 @@ add_custom_target(daplink-generate
             -o "generator=${DAPLINK_CMAKE_GENERATOR}"
             ${_progen_p_args}
     WORKING_DIRECTORY "${DAPLINK_ROOT}"
-    COMMENT "Generate DAPLink CMake/${DAPLINK_CMAKE_GENERATOR} projects"
+    COMMENT "Apply overlay + generate DAPLink CMake/${DAPLINK_CMAKE_GENERATOR} projects"
     VERBATIM
 )
 
 add_custom_target(daplink-firmware ALL
+    COMMAND "${CMAKE_COMMAND}"
+            "-DDAPLINK_ROOT=${DAPLINK_ROOT}"
+            "-DOVERLAY_DIR=${CMAKE_CURRENT_SOURCE_DIR}/overlay/stm32f103xb"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyOverlay.cmake"
     COMMAND "${_WITH_ENV}"
             "${DAPLINK_VENV_PYTHON}" "${DAPLINK_PROGEN}"
             generate
@@ -145,7 +153,7 @@ add_custom_target(daplink-firmware ALL
             "-DDAPLINK_PROJECTS=${_daplink_projects_csv}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CollectFirmware.cmake"
     WORKING_DIRECTORY "${DAPLINK_ROOT}"
-    COMMENT "Build STM32F103 DAPLink firmware and collect binaries"
+    COMMENT "Build STM32F103 DAPLink (+ESP32 auto-download) firmware"
     VERBATIM
     USES_TERMINAL
 )
