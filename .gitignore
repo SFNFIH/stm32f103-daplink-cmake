@@ -1,0 +1,19 @@
+# Build / Python
+/build/
+**/venv/
+**/__pycache__/
+*.pyc
+.Python
+
+# DAPLink generated project files (recreated by progen)
+third_party/DAPLink/projectfiles/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Firmware drop copies outside build/
+*.elf
+!docs/**

@@ -1,0 +1,4 @@
+[submodule "third_party/DAPLink"]
+	path = third_party/DAPLink
+	url = https://github.com/ARMmbed/DAPLink.git
+	branch = develop

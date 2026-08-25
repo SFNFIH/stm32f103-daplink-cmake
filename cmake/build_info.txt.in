@@ -1,0 +1,11 @@
+STM32F103 DAPLink CMake build
+==============================
+
+Configured at: @CMAKE_BINARY_DIR@
+DAPLink sources: @DAPLINK_ROOT@
+ARM GCC: @ARM_NONE_EABI_GCC@ (@ARM_GCC_VERSION@)
+Bootloader project: @DAPLINK_BOOTLOADER_PROJECT@
+Interface project: @DAPLINK_INTERFACE_PROJECT@
+Build bootloader: @DAPLINK_BUILD_BOOTLOADER@
+Build interface: @DAPLINK_BUILD_INTERFACE@
+Firmware output: @FIRMWARE_OUT_DIR@
