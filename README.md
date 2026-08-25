@@ -1,151 +1,94 @@
 # STM32F103 DAPLink / ESP32 自动下载
 
-基于 [ARMmbed/DAPLink](https://github.com/ARMmbed/DAPLink) 的 STM32F103xB 固件工程。  
-一块板子、一份固件，上电读 **PB1** 在两种工作模式间切换。
+基于 [ARMmbed/DAPLink](https://github.com/ARMmbed/DAPLink) 的 STM32F103xB 固件。  
+两种功能**不能同时用**，因此目标侧做成**同一套 6 针排针**（含电源）；上电读 **PB1** 决定当前功能。
 
-| PB1 | 模式 | 用途 |
-|-----|------|------|
-| 悬空 / 高电平（内部上拉） | DAPLink | CMSIS-DAP 调试、虚拟串口、U 盘拖拽烧录 |
-| 接 GND | ESP32 自动下载 | USB 串口 + DTR/RTS 控制 EN/IO0，配合 esptool |
+| PB1（板上跳线，不在 6 针里） | 模式 |
+|------------------------------|------|
+| 悬空 / 高（内部上拉） | DAPLink：SWD 调试 |
+| 接 GND | ESP32：串口自动下载（esptool） |
 
-> 模式只在上电时采样一次，切换模式请断电再上电。
-
----
-
-## 功能概览
-
-**DAPLink 模式**
-
-- CMSIS-DAP（SWD）
-- CDC 虚拟串口
-- MSD 拖拽升级
-
-**ESP32 模式**
-
-- CDC 透传（USART2）
-- 模拟经典 DevKit 自动下载电路：`RTS → EN`，`DTR → GPIO0`
-- 连接 LED（PB6）常亮，便于识别当前模式
+换模式请断电再上电。
 
 ---
 
-## 硬件
+## 统一 6 针排针
 
-- MCU：**STM32F103CB**（128 KB Flash / 20 KB RAM）
-- Flash 布局：Bootloader 48 KB + Interface
+两种模式共用同一排针、同一焊盘：
 
-### 引脚一览
+| 针号 | 丝印 | STM32 | DAPLink 模式 | ESP32 模式 |
+|------|------|-------|--------------|------------|
+| 1 | 3V3 | 3V3 | 电源 | 电源 |
+| 2 | GND | GND | 地 | 地 |
+| 3 | DIO | **PB14** | SWDIO | IO0 (BOOT) |
+| 4 | CLK/TX | **PA2** | SWCLK | UART TX → ESP RX0 |
+| 5 | RST | **PB0** | nRESET | EN |
+| 6 | RX | **PA3** | UART RX（CDC） | UART RX ← ESP TX0 |
 
-| 信号 | 引脚 | DAPLink | ESP32 模式 |
-|------|------|---------|------------|
-| MODE_SEL | PB1 | 模式选择（上拉） | 接 GND 进入本模式 |
-| UART TX | PA2 | 目标串口 TX | → ESP32 RX0 |
-| UART RX | PA3 | 目标串口 RX | ← ESP32 TX0 |
-| nRESET / EN | PB0 | 目标复位 | → ESP32 EN |
-| IO0 / BOOT | PB8 | — | → ESP32 GPIO0 |
-| SWCLK | PB13 | SWD 时钟 | — |
-| SWDIO 出 | PB14 | SWD 数据出 | — |
-| SWDIO 入 | PB12 | SWD 数据入 | — |
-| SWO | PA10 | 跟踪输出 | — |
-| 连接 LED | PB6 | 连接指示 | ESP32 模式下常亮 |
-| 状态 LED | PA9 | HID/CDC/MSC | 同左 |
-| USB 连接 | PA15 | USB 拉高 | 同左 |
+说明：
 
-### ESP32 最小接线
+- **SWDIO / IO0**、**nRESET / EN** 为同一 GPIO，按模式改功能。  
+- **PA2** 在 DAP 模式作 SWCLK，在 ESP 模式作串口 TX（因此 DAP 模式下目标串口只保证 RX，TX 与 SWCLK 复用）。  
+- ESP32 模式：DTR→IO0、RTS→EN（经典自动下载时序），PB6 连接灯常亮。
 
 ```
-STM32        ESP32
-─────        ─────
-PA2    →     RX0
-PA3    ←     TX0
-PB0    →     EN
-PB8    →     GPIO0
-PB1    →     GND   （选择 ESP32 模式）
-GND    —     GND
+        6-Pin Header
+   ┌─────────────────┐
+   │ 1 3V3    2 GND  │
+   │ 3 DIO    4 CLK  │  CLK = SWCLK 或 TX
+   │ 5 RST    6 RX   │
+   └─────────────────┘
 ```
 
 ---
 
-## 快速开始
+## 接线示例
 
-### 1. 环境
+**烧录 ESP32（PB1→GND 后上电）**
 
-```bash
-sudo apt install cmake ninja-build python3-venv python-is-python3 \
-  gcc-arm-none-eabi binutils-arm-none-eabi
-```
-
-### 2. 获取源码
-
-```bash
-git clone --recurse-submodules https://github.com/SFNFIH/stm32f103-daplink-cmake.git
-cd stm32f103-daplink-cmake
-```
-
-若已克隆未拉子模块：
-
-```bash
-git submodule update --init --recursive
-```
-
-### 3. 编译
-
-```bash
-chmod +x scripts/*.sh
-./scripts/build.sh
-```
-
-或：
-
-```bash
-cmake -S . -B build
-cmake --build build
-```
-
-产物目录：`build/firmware/`
-
-| 文件 | 说明 |
-|------|------|
-| `stm32f103xb_bl_crc.bin` / `.hex` | Bootloader |
-| `stm32f103xb_if_crc.bin` / `.hex` | 接口固件（含双模式） |
-
-### 4. 烧录到 STM32
-
-1. 用 ST-Link / ISP 将 bootloader 写到 `0x08000000`
-2. 再写入 interface；之后可用 DAPLink U 盘方式升级 interface
-
-### 5. 使用
-
-**调试其它 MCU（DAPLink）**  
-PB1 悬空 → 接 SWDIO / SWCLK / nRESET / GND → USB 插电脑。
-
-**烧录 ESP32**  
-PB1 接 GND 后上电 → 按上表接好 UART/EN/IO0 →：
+| 6 针 | ESP32 |
+|------|-------|
+| 3V3 | 3V3 |
+| GND | GND |
+| DIO | GPIO0 |
+| CLK/TX | RX0 |
+| RST | EN |
+| RX | TX0 |
 
 ```bash
 esptool.py --port <串口> write_flash 0x1000 app.bin
 ```
 
-串口名因系统而异（如 `/dev/ttyACM0`、`COM3`）。
+**调试其它 MCU（PB1 悬空）**
+
+| 6 针 | 目标 |
+|------|------|
+| 3V3 | VTref / 3V3（按需） |
+| GND | GND |
+| DIO | SWDIO |
+| CLK/TX | SWCLK |
+| RST | nRESET |
+| RX | 目标 UART TX（可选，作日志） |
 
 ---
 
-## CMake 选项
+## 编译
 
 ```bash
-# 只编接口固件
-cmake -S . -B build -DDAPLINK_BUILD_BOOTLOADER=OFF
+sudo apt install cmake ninja-build python3-venv python-is-python3 \
+  gcc-arm-none-eabi binutils-arm-none-eabi
 
-# 指定板级 interface 工程（拖拽算法绑定具体目标）
-cmake -S . -B build -DDAPLINK_INTERFACE_PROJECT=stm32f103xb_stm32f103rb_if
-
-# 使用 Make 代替 Ninja
-cmake -S . -B build -DDAPLINK_CMAKE_GENERATOR=make
+git clone --recurse-submodules https://github.com/SFNFIH/stm32f103-daplink-cmake.git
+cd stm32f103-daplink-cmake
+./scripts/build.sh
 ```
 
-清理生成物：
+固件：`build/firmware/stm32f103xb_bl_crc.*`、`stm32f103xb_if_crc.*`  
+芯片：**STM32F103CB**（Bootloader 48KB + Interface）。
 
 ```bash
-cmake --build build --target daplink-clean
+cmake -S . -B build -DDAPLINK_BUILD_BOOTLOADER=OFF   # 仅接口固件
+cmake --build build --target daplink-clean           # 清理
 ```
 
 ---
@@ -153,26 +96,10 @@ cmake --build build --target daplink-clean
 ## 仓库结构
 
 ```
-.
-├── CMakeLists.txt                 # 顶层构建编排
-├── README.md
-├── overlay/stm32f103xb/           # 双模式补丁（构建前写入 DAPLink HIC）
-│   ├── esp32_autoload.c / .h
-│   ├── IO_Config.h
-│   ├── gpio.c
-│   └── uart.c
-├── cmake/                         # venv、overlay、收集固件
-├── scripts/                       # build / setup_venv / with_daplink_env
-└── third_party/DAPLink/           # 官方源码（submodule，develop）
+overlay/stm32f103xb/     # 统一 6 针 + 双模式补丁（构建时写入 DAPLink）
+third_party/DAPLink/     # 官方源码 submodule（develop）
+CMakeLists.txt / cmake/ / scripts/
 ```
 
-自定义逻辑集中在 `overlay/`，不直接改上游历史；每次构建会自动拷贝进 DAPLink 的 `stm32f103xb` HIC 目录。
-
----
-
-## 说明
-
-- 上游构建链：`progen` + `cmake_gcc_arm` + `arm-none-eabi-gcc`（建议 GCC 12+）
-- Python 环境需 `setuptools<81`（`progen` 依赖 `pkg_resources`），脚本已处理
-- DAPLink 协议：Apache-2.0  
-- 本仓库：https://github.com/SFNFIH/stm32f103-daplink-cmake
+上游 DAPLink：Apache-2.0  
+本仓库：https://github.com/SFNFIH/stm32f103-daplink-cmake

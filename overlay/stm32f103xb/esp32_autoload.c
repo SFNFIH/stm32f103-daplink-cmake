@@ -1,6 +1,6 @@
 /**
  * @file    esp32_autoload.c
- * @brief   Boot mode select + ESP32 auto-download control-line handling
+ * @brief   Boot mode select + ESP32 auto-download on the unified 6-pin header
  */
 #include "esp32_autoload.h"
 #include "IO_Config.h"
@@ -12,16 +12,16 @@ void esp32_autoload_init(void)
 {
     GPIO_InitTypeDef gpio = {0};
 
+    __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
 
-    /* Mode select: input pull-up. Tie to GND before power-up for ESP32 mode. */
+    /* MODE_SEL PB1: pull-up, sample once */
     gpio.Pin = MODE_SEL_PIN;
     gpio.Mode = GPIO_MODE_INPUT;
     gpio.Pull = GPIO_PULLUP;
     gpio.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(MODE_SEL_PORT, &gpio);
 
-    /* Allow pull-up to settle */
     for (volatile uint32_t i = 0; i < 10000; i++) {
     }
 
@@ -32,9 +32,9 @@ void esp32_autoload_init(void)
     }
 
     /*
-     * ESP32 mode: drive EN / IO0 directly (active-low when CDC line asserted),
-     * matching the classic CP2102/CH340 auto-download transistor circuit.
-     * Idle both HIGH so the chip can run after flashing.
+     * ESP32 mode on the same 6-pin header:
+     *   PB14 IO0, PB0 EN, PA2 TX, PA3 RX  (+ 3V3 / GND)
+     * Emulate classic auto-download: idle EN/IO0 high.
      */
     HAL_GPIO_WritePin(ESP32_EN_PORT, ESP32_EN_PIN, GPIO_PIN_SET);
     HAL_GPIO_WritePin(ESP32_IO0_PORT, ESP32_IO0_PIN, GPIO_PIN_SET);
@@ -49,7 +49,7 @@ void esp32_autoload_init(void)
     gpio.Pin = ESP32_IO0_PIN;
     HAL_GPIO_Init(ESP32_IO0_PORT, &gpio);
 
-    /* Distinct LED hint: connected LED on in ESP32 mode */
+    /* Connected LED on => ESP32 mode */
     HAL_GPIO_WritePin(CONNECTED_LED_PORT, CONNECTED_LED_PIN, GPIO_PIN_RESET);
 }
 
@@ -64,10 +64,10 @@ void esp32_autoload_set_control_lines(uint16_t ctrl_bmp)
         return;
     }
 
-    const bool dtr = (ctrl_bmp & 0x01u) != 0u; /* bit0 */
-    const bool rts = (ctrl_bmp & 0x02u) != 0u; /* bit1 */
+    const bool dtr = (ctrl_bmp & 0x01u) != 0u;
+    const bool rts = (ctrl_bmp & 0x02u) != 0u;
 
-    /* Asserted => pin LOW (transistor-equivalent for esptool classic reset) */
+    /* Classic circuit: asserted RTS->EN low, asserted DTR->IO0 low */
     HAL_GPIO_WritePin(ESP32_EN_PORT, ESP32_EN_PIN, rts ? GPIO_PIN_RESET : GPIO_PIN_SET);
     HAL_GPIO_WritePin(ESP32_IO0_PORT, ESP32_IO0_PIN, dtr ? GPIO_PIN_RESET : GPIO_PIN_SET);
 }

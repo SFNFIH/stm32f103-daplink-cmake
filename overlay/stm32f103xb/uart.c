@@ -89,24 +89,32 @@ int32_t uart_initialize(void)
     CDC_UART_ENABLE();
     UART_PINS_PORT_ENABLE();
 
-    //TX pin
-    GPIO_InitStructure.Pin = UART_TX_PIN;
-    GPIO_InitStructure.Speed = GPIO_SPEED_FREQ_HIGH;
-    GPIO_InitStructure.Mode = GPIO_MODE_AF_PP;
-    HAL_GPIO_Init(UART_TX_PORT, &GPIO_InitStructure);
-    //RX pin
+    /*
+     * Unified header pin4 = PA2:
+     *   ESP32 mode  -> USART2 TX
+     *   DAPLink mode -> SWCLK bit-bang (do not claim as UART TX)
+     */
+    if (esp32_autoload_enabled()) {
+        GPIO_InitStructure.Pin = UART_TX_PIN;
+        GPIO_InitStructure.Speed = GPIO_SPEED_FREQ_HIGH;
+        GPIO_InitStructure.Mode = GPIO_MODE_AF_PP;
+        HAL_GPIO_Init(UART_TX_PORT, &GPIO_InitStructure);
+    }
+
+    /* Pin6 PA3: UART RX in both modes */
     GPIO_InitStructure.Pin = UART_RX_PIN;
     GPIO_InitStructure.Speed = GPIO_SPEED_FREQ_HIGH;
     GPIO_InitStructure.Mode = GPIO_MODE_INPUT;
     GPIO_InitStructure.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(UART_RX_PORT, &GPIO_InitStructure);
-    //CTS pin, input
+
+    /* Legacy CTS/RTS pads (not on the 6-pin target header) */
     GPIO_InitStructure.Pin = UART_CTS_PIN;
     GPIO_InitStructure.Speed = GPIO_SPEED_FREQ_HIGH;
     GPIO_InitStructure.Mode = GPIO_MODE_INPUT;
     GPIO_InitStructure.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(UART_CTS_PORT, &GPIO_InitStructure);
-    //RTS pin, output low
+
     HAL_GPIO_WritePin(UART_RTS_PORT, UART_RTS_PIN, GPIO_PIN_RESET);
     GPIO_InitStructure.Pin = UART_RTS_PIN;
     GPIO_InitStructure.Speed = GPIO_SPEED_FREQ_HIGH;
