@@ -1,75 +1,114 @@
 # STM32F103 DAPLink / ESP32 自动下载
 
 基于 [ARMmbed/DAPLink](https://github.com/ARMmbed/DAPLink) 的 STM32F103xB 固件。  
-两种功能**不能同时用**，因此目标侧做成**同一套 6 针排针**（含电源）；上电读 **PB1** 决定当前功能。
+目标侧 **同一套 6 针**；用 **ADG936（推荐）或 ADG904** 在 SWD 与硬件 USART 之间切换。  
+上电读 **PB1** 决定模式，并驱动 **PB7 (MUX_CTRL)**。
 
-| PB1（板上跳线，不在 6 针里） | 模式 |
-|------------------------------|------|
-| 悬空 / 高（内部上拉） | DAPLink：SWD 调试 |
-| 接 GND | ESP32：串口自动下载（esptool） |
-
-换模式请断电再上电。
+| PB1 MODE_SEL | 模式 | PB7 MUX_CTRL |
+|--------------|------|--------------|
+| 悬空 / 高 | DAPLink（SWD） | 高 → 接通 SWDIO/SWCLK |
+| 接 GND | ESP32 自动下载 | 低 → 接通 USART TX/RX |
 
 ---
 
-## 统一 6 针排针
+## 统一 6 针
 
-两种模式共用同一排针、同一焊盘：
+| 针 | 丝印 | 去向 |
+|----|------|------|
+| 1 | 3V3 | 电源 |
+| 2 | GND | 地 |
+| 3 | DIO | → 模拟开关 → SWDIO **或** USART_RX |
+| 4 | CLK/TX | → 模拟开关 → SWCLK **或** USART_TX |
+| 5 | RST | **PB0**（nRESET / EN，直连） |
+| 6 | IO0 | **PB8**（仅 ESP32 用；DAP 可悬空） |
 
-| 针号 | 丝印 | STM32 | DAPLink 模式 | ESP32 模式 |
-|------|------|-------|--------------|------------|
-| 1 | 3V3 | 3V3 | 电源 | 电源 |
-| 2 | GND | GND | 地 | 地 |
-| 3 | DIO | **PB14** | SWDIO | **UART RX（软件串口）** |
-| 4 | CLK/TX | **PA2** | SWCLK | **UART TX（软件串口）** |
-| 5 | RST | **PB0** | nRESET | EN（GPIO / RTS） |
-| 6 | IO0 | **PA3** | UART RX（CDC，硬件 USART2） | **IO0（GPIO / DTR）** |
+### STM32 引脚
 
-说明：
+| 功能 | GPIO |
+|------|------|
+| MODE_SEL | PB1（输入上拉） |
+| MUX_CTRL | PB7（输出，接 ADG 控制脚） |
+| SWDIO | PB14 |
+| SWCLK | PB13 |
+| USART2 TX | PA2 |
+| USART2 RX | PA3 |
+| nRESET / EN | PB0 |
+| IO0 | PB8 |
+| 连接 LED | PB6（ESP 模式常亮） |
 
-- ESP32 烧录串口为 **GPIO 位带软件 UART**（不是硬件 USART）；IO0/EN 为普通 GPIO。  
-- **IO0 与 RX 已对调**：IO0=PA3，RX=PB14。  
-- DAP 模式下 PA2 作 SWCLK，故目标串口仅 RX（PA3）可用。  
-- ESP32 模式：DTR→IO0、RTS→EN；PB6 连接灯常亮。
+ESP32 模式串口为 **硬件 USART2**，可稳定使用较高烧录波特率（如 460800 / 921600，视布线而定）。
+
+---
+
+## 模拟开关接线（ADG936 推荐）
+
+ADG936 为双路 SPDT，一路切 DIO，一路切 CLK/TX：
 
 ```
-        6-Pin Header
-   ┌─────────────────┐
-   │ 1 3V3    2 GND  │
-   │ 3 DIO    4 CLK  │  DIO=SWDIO/软RX  CLK=SWCLK/软TX
-   │ 5 RST    6 IO0  │  RST=nRESET/EN   IO0=CDC_RX/ESP_IO0
-   └─────────────────┘
+                    ADG936
+                 ┌──────────┐
+  Header DIO ───│ S1A       │
+                │     D1 ───│←── Header 针3
+  PB14 SWDIO ───│ S1B       │      (公共端接排针)
+                │           │
+  Header 概念上由 D1 出到针3；S1A/S1B 为两路输入。
+  （按 ADG936 数据手册：Dx 为公共端，SxA/SxB 为被选端）
+
+  PA3  USART_RX ── S1A
+  PB14 SWDIO    ── S1B
+  D1 ────────────── 针3 DIO
+
+  PA2  USART_TX ── S2A
+  PB13 SWCLK    ── S2B
+  D2 ────────────── 针4 CLK/TX
+
+  CTRL ──────────── PB7 (MUX_CTRL)
+  VDD / GND        3V3 / GND
+  EN 接高（常开）
 ```
+
+逻辑（与固件一致）：
+
+| MUX_CTRL | 针3 | 针4 |
+|----------|-----|-----|
+| 高 (DAP) | PB14 SWDIO | PB13 SWCLK |
+| 低 (ESP) | PA3 RX | PA2 TX |
+
+若 CTRL 极性与芯片封装定义相反，可对调 SxA/SxB，或改 `IO_Config.h` 里 `MUX_CTRL_*_LEVEL`。
+
+### 使用 ADG904（SP4T）时
+
+用两片 ADG904（或一片多路）分别切换针3、针4；`A0/A1` 编码中仅用两态时，把 **A0 接 PB7**，A1 接地，只在两路输入间切换即可（其余输入悬空或接地）。
 
 ---
 
 ## 接线示例
 
-**烧录 ESP32（PB1→GND 后上电）**
+**ESP32（PB1→GND）**
 
 | 6 针 | ESP32 |
 |------|-------|
 | 3V3 | 3V3 |
 | GND | GND |
-| DIO (PB14) | TX0（模组输出） |
-| CLK/TX (PA2) | RX0（模组输入） |
-| RST (PB0) | EN |
-| IO0 (PA3) | GPIO0 |
+| DIO | TX0 |
+| CLK/TX | RX0 |
+| RST | EN |
+| IO0 | GPIO0 |
 
 ```bash
-esptool.py --port <串口> write_flash 0x1000 app.bin
+esptool.py -b 460800 --port <串口> write_flash 0x1000 app.bin
 ```
 
-**调试其它 MCU（PB1 悬空）**
+**DAPLink（PB1 悬空）**
 
 | 6 针 | 目标 |
 |------|------|
-| 3V3 | VTref / 3V3（按需） |
+| 3V3 | 3V3 / VTref |
 | GND | GND |
 | DIO | SWDIO |
 | CLK/TX | SWCLK |
 | RST | nRESET |
-| IO0 | 目标 UART TX（可选日志） |
+| IO0 | — |
 
 ---
 
@@ -84,23 +123,14 @@ cd stm32f103-daplink-cmake
 ./scripts/build.sh
 ```
 
-固件：`build/firmware/stm32f103xb_bl_crc.*`、`stm32f103xb_if_crc.*`  
-芯片：**STM32F103CB**（Bootloader 48KB + Interface）。
-
-```bash
-cmake -S . -B build -DDAPLINK_BUILD_BOOTLOADER=OFF   # 仅接口固件
-cmake --build build --target daplink-clean           # 清理
-```
+产物：`build/firmware/stm32f103xb_*_crc.bin`  
+MCU：**STM32F103CB**（Bootloader 48KB + Interface）。
 
 ---
 
-## 仓库结构
+## 说明
 
-```
-overlay/stm32f103xb/     # 统一 6 针 + 双模式补丁（构建时写入 DAPLink）
-third_party/DAPLink/     # 官方源码 submodule（develop）
-CMakeLists.txt / cmake/ / scripts/
-```
-
-上游 DAPLink：Apache-2.0  
-本仓库：https://github.com/SFNFIH/stm32f103-daplink-cmake
+- 切换模式：改 PB1 后 **重新上电**（同时切换固件逻辑与 ADG 通道）。  
+- 也可把 ADG `CTRL` 直接并到 MODE_SEL 跳线网络；固件仍会驱动 PB7，建议 CTRL 只接 PB7，MODE_SEL 只接跳线。  
+- 上游 DAPLink：Apache-2.0  
+- 仓库：https://github.com/SFNFIH/stm32f103-daplink-cmake

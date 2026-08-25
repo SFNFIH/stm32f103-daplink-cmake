@@ -1,6 +1,6 @@
 /**
  * @file    esp32_autoload.c
- * @brief   Boot mode select + ESP32 auto-download on the unified 6-pin header
+ * @brief   Boot mode select, ADG mux control, ESP32 DTR/RTS GPIO
  */
 #include "esp32_autoload.h"
 #include "IO_Config.h"
@@ -15,7 +15,7 @@ void esp32_autoload_init(void)
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
 
-    /* MODE_SEL PB1: pull-up, sample once */
+    /* MODE_SEL PB1: pull-up. LOW => ESP32 mode */
     gpio.Pin = MODE_SEL_PIN;
     gpio.Mode = GPIO_MODE_INPUT;
     gpio.Pull = GPIO_PULLUP;
@@ -27,17 +27,20 @@ void esp32_autoload_init(void)
 
     s_esp32_mode = (HAL_GPIO_ReadPin(MODE_SEL_PORT, MODE_SEL_PIN) == GPIO_PIN_RESET);
 
+    /* Drive ADG936/ADG904 select (also safe if CTRL is hard-wired to MODE_SEL) */
+    gpio.Pin = MUX_CTRL_PIN;
+    gpio.Mode = GPIO_MODE_OUTPUT_PP;
+    gpio.Pull = GPIO_NOPULL;
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(MUX_CTRL_PORT, &gpio);
+    HAL_GPIO_WritePin(MUX_CTRL_PORT, MUX_CTRL_PIN,
+                      s_esp32_mode ? MUX_CTRL_ESP_LEVEL : MUX_CTRL_DAP_LEVEL);
+
     if (!s_esp32_mode) {
         return;
     }
 
-    /*
-     * ESP32 mode on the same 6-pin header:
-     *   PA3  IO0 (GPIO / DTR)
-     *   PB0  EN  (GPIO / RTS)
-     *   PA2  TX  (soft UART)
-     *   PB14 RX  (soft UART)
-     */
+    /* ESP32: EN + IO0 idle high (classic auto-download idle) */
     HAL_GPIO_WritePin(ESP32_EN_PORT, ESP32_EN_PIN, GPIO_PIN_SET);
     HAL_GPIO_WritePin(ESP32_IO0_PORT, ESP32_IO0_PIN, GPIO_PIN_SET);
 
@@ -51,7 +54,6 @@ void esp32_autoload_init(void)
     gpio.Pin = ESP32_IO0_PIN;
     HAL_GPIO_Init(ESP32_IO0_PORT, &gpio);
 
-    /* Connected LED on => ESP32 mode */
     HAL_GPIO_WritePin(CONNECTED_LED_PORT, CONNECTED_LED_PIN, GPIO_PIN_RESET);
 }
 
@@ -69,7 +71,6 @@ void esp32_autoload_set_control_lines(uint16_t ctrl_bmp)
     const bool dtr = (ctrl_bmp & 0x01u) != 0u;
     const bool rts = (ctrl_bmp & 0x02u) != 0u;
 
-    /* Classic circuit: asserted RTS->EN low, asserted DTR->IO0 low */
     HAL_GPIO_WritePin(ESP32_EN_PORT, ESP32_EN_PIN, rts ? GPIO_PIN_RESET : GPIO_PIN_SET);
     HAL_GPIO_WritePin(ESP32_IO0_PORT, ESP32_IO0_PIN, dtr ? GPIO_PIN_RESET : GPIO_PIN_SET);
 }
