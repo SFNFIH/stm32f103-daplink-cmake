@@ -28,8 +28,10 @@ COMPILER_ASSERT(DAPLINK_HIC_ID == DAPLINK_HIC_ID_STM32F103XB);
 #define USB_CONNECT_PORT_DISABLE()   __HAL_RCC_GPIOA_CLK_DISABLE()
 #define USB_CONNECT_PORT             GPIOA
 #define USB_CONNECT_PIN              GPIO_PIN_15
-#define USB_CONNECT_ON()             (USB_CONNECT_PORT->BSRR = USB_CONNECT_PIN)
-#define USB_CONNECT_OFF()            (USB_CONNECT_PORT->BRR  = USB_CONNECT_PIN)
+/* Active-low pull-up enable (PNP / inverted MOSFET). Official DAPLink is
+ * active-high; that left D+ attached during boot and caused error -71. */
+#define USB_CONNECT_ON()             (USB_CONNECT_PORT->BRR  = USB_CONNECT_PIN)
+#define USB_CONNECT_OFF()            (USB_CONNECT_PORT->BSRR = USB_CONNECT_PIN)
 
 #define CONNECTED_LED_PORT           GPIOB
 #define CONNECTED_LED_PIN            GPIO_PIN_6

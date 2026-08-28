@@ -23,10 +23,7 @@
 #include "DAP_config.h"
 #include "gpio.h"
 #include "daplink.h"
-#include "util.h"
 #include "esp32_autoload.h"
-
-static TIM_HandleTypeDef timer;
 
 static void busy_wait(uint32_t cycles)
 {
@@ -36,81 +33,6 @@ static void busy_wait(uint32_t cycles)
     while (i > 0) {
         i--;
     }
-}
-
-static uint32_t tim1_clk_div(uint32_t apb2clkdiv)
-{
-    switch (apb2clkdiv) {
-        case RCC_CFGR_PPRE2_DIV2:
-            return 1;
-        case RCC_CFGR_PPRE2_DIV4:
-            return 2;
-        case RCC_CFGR_PPRE2_DIV8:
-            return 4;
-        default: // RCC_CFGR_PPRE2_DIV1
-            return 1;
-    }
-}
-
-static void output_clock_enable(void)
-{
-    HAL_StatusTypeDef ret;
-    RCC_ClkInitTypeDef clk_init;
-    TIM_OC_InitTypeDef pwm_config;
-    uint32_t unused;
-    uint32_t period;
-    uint32_t source_clock;
-
-    HAL_RCC_GetClockConfig(&clk_init, &unused);
-
-    /* Compute the period value to have TIMx counter clock equal to 8000000 Hz */
-    source_clock = SystemCoreClock / tim1_clk_div(clk_init.APB2CLKDivider);
-    period = (uint32_t)(source_clock / 8000000) - 1;
-
-    /* Set TIMx instance */
-    timer.Instance = TIM1;
-
-    timer.Init.Period            = period;
-    timer.Init.Prescaler         = 0;
-    timer.Init.ClockDivision     = 0;
-    timer.Init.CounterMode       = TIM_COUNTERMODE_UP;
-    timer.Init.RepetitionCounter = 0;//period / 2;
-
-    __HAL_RCC_TIM1_CLK_ENABLE();
-
-    ret = HAL_TIM_PWM_DeInit(&timer);
-    if (ret != HAL_OK) {
-        util_assert(0);
-        return;
-    }
-
-    ret = HAL_TIM_PWM_Init(&timer);
-    if (ret != HAL_OK) {
-        util_assert(0);
-        return;
-    }
-
-    pwm_config.OCMode = TIM_OCMODE_PWM2;
-    pwm_config.Pulse = 0; // TODO - make sure this isn't used
-    pwm_config.OCPolarity = TIM_OCPOLARITY_HIGH;
-    pwm_config.OCNPolarity = TIM_OCPOLARITY_HIGH;
-    pwm_config.OCFastMode = TIM_OCFAST_DISABLE;
-    pwm_config.OCIdleState = TIM_OCIDLESTATE_RESET;
-    pwm_config.OCNIdleState = TIM_OCIDLESTATE_RESET;
-    ret = HAL_TIM_PWM_ConfigChannel(&timer, &pwm_config, TIM_CHANNEL_1);
-    if (ret != HAL_OK) {
-        util_assert(0);
-        return;
-    }
-
-    __HAL_TIM_SET_COMPARE(&timer, TIM_CHANNEL_1, period / 2);
-    ret = HAL_TIM_PWM_Start(&timer, TIM_CHANNEL_1);
-    if (ret != HAL_OK) {
-        util_assert(0);
-        return;
-    }
-
-    return;
 }
 
 void gpio_init(void)
@@ -132,7 +54,14 @@ void gpio_init(void)
     GPIO_InitStructure.Pin = USB_CONNECT_PIN;
     GPIO_InitStructure.Speed = GPIO_SPEED_FREQ_HIGH;
     GPIO_InitStructure.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStructure.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(USB_CONNECT_PORT, &GPIO_InitStructure);
+
+    /* Leave USB DP/DM (PA11/PA12) as floating inputs for the USB cell. */
+    GPIO_InitStructure.Pin = GPIO_PIN_11 | GPIO_PIN_12;
+    GPIO_InitStructure.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStructure.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStructure);
     // configure LEDs
     HAL_GPIO_WritePin(RUNNING_LED_PORT, RUNNING_LED_PIN, GPIO_PIN_SET);
     GPIO_InitStructure.Pin = RUNNING_LED_PIN;
@@ -173,20 +102,12 @@ void gpio_init(void)
     GPIO_InitStructure.Mode = GPIO_MODE_OUTPUT_PP;
     HAL_GPIO_Init(POWER_EN_PIN_PORT, &GPIO_InitStructure);
 
-    // Setup the 8MHz MCO
-    GPIO_InitStructure.Pin = GPIO_PIN_8;
-    GPIO_InitStructure.Speed = GPIO_SPEED_FREQ_HIGH;
-    GPIO_InitStructure.Mode = GPIO_MODE_AF_PP;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStructure);
-    output_clock_enable();
+    /* Do not drive PA8 as 8 MHz MCO/TIM1 — leftover from the mbed HIC.
+     * This board uses PB8 as ESP32 IO0; an 8 MHz square wave on PA8 couples
+     * into USB FS and shows up as host error -71. */
 
-    // Let the voltage rails stabilize.  This is especailly important
-    // during software resets, since the target's 3.3v rail can take
-    // 20-50ms to drain.  During this time the target could be driving
-    // the reset pin low, causing the bootloader to think the reset
-    // button is pressed.
-    // Note: With optimization set to -O2 the value 1000000 delays for ~85ms
-    busy_wait(1000000);
+    /* Short settle only — 85 ms let Linux enumerate a dead USB cell (-71). */
+    busy_wait(20000);
 
     /*
      * Sample MODE_SEL after rails settle.
@@ -215,11 +136,8 @@ void gpio_set_msc_led(gpio_led_state_t state)
 
 uint8_t gpio_get_reset_btn_no_fwrd(void)
 {
-    /* In ESP32 auto-download mode EN is driven by DTR/RTS; do not treat as button. */
-    if (esp32_autoload_enabled()) {
-        return 0;
-    }
-    return (nRESET_PIN_PORT->IDR & nRESET_PIN) ? 0 : 1;
+    /* PB0 is target RST / ESP32 EN, not a "hold in bootloader" button. */
+    return 0;
 }
 
 uint8_t gpio_get_reset_btn_fwrd(void)
